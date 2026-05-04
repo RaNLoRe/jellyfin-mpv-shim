@@ -34,6 +34,7 @@
   <url type="homepage">https://github.com/jellyfin/jellyfin-mpv-shim</url>
   <url type="help">https://github.com/jellyfin/jellyfin-mpv-shim/blob/master/README.md</url>
   <url type="bugtracker">https://github.com/jellyfin/jellyfin-mpv-shim/issues</url>
+  <url type="vcs-browser">https://github.com/jellyfin/jellyfin-mpv-shim</url>
 
   <screenshots>
     <screenshot type="default">
