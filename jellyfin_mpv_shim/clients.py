@@ -1,22 +1,24 @@
+import ipaddress
+import json
+import logging
+import os.path
+import re
+import socket
+import sys
+import threading
+import time
+import uuid
+from getpass import getpass
+from typing import Optional
+from urllib.parse import urlparse
+
 from jellyfin_apiclient_python import JellyfinClient
 from jellyfin_apiclient_python.connection_manager import CONNECTION_STATE
-from .conf import settings
+
 from . import conffile
-from getpass import getpass
-from .constants import CAPABILITIES, CLIENT_VERSION, USER_APP_NAME, USER_AGENT, APP_NAME
+from .conf import settings
+from .constants import APP_NAME, CAPABILITIES, CLIENT_VERSION, USER_AGENT, USER_APP_NAME
 from .i18n import _
-
-import os.path
-import json
-import uuid
-import time
-import logging
-import re
-import threading
-
-import socket
-import ipaddress
-from urllib.parse import urlparse
 
 
 # Get all local IPv4 addresses for host machine
@@ -75,8 +77,6 @@ def is_local_subnet(host, local_ips, prefix_length=24):
 log = logging.getLogger("clients")
 path_regex = re.compile(r"^(https?://)?(?:(\[[^/]+\])|([^/:]+))(:[0-9]+)?(/.*)?$")
 
-from typing import Optional
-
 
 def expo(max_value: Optional[int] = None):
     n = 0
@@ -124,6 +124,7 @@ class ClientManager(object):
     @staticmethod
     def _get_cli_credential_args():
         from .args import get_args
+
         a = get_args()
         if a.server and a.username:
             return a.server, a.username, a.password
@@ -159,6 +160,7 @@ class ClientManager(object):
 
     def cli_connect(self):
         from .args import get_args
+
         cli_commands = set(get_args().command or [])
 
         is_logged_in = self.try_connect()
@@ -354,7 +356,10 @@ class ClientManager(object):
                 "GET", "Sessions", {"params": None, "timeout": 10, "retry": 1}
             )
         except Exception:
-            log.warning("Health check session query failed; treating as disconnected.", exc_info=True)
+            log.warning(
+                "Health check session query failed; treating as disconnected.",
+                exc_info=True,
+            )
             client_list = []
 
         if client_list is None:
@@ -452,7 +457,7 @@ class ClientManager(object):
                 partial_reconnect_attempts = 3
                 for i in range(partial_reconnect_attempts):
                     log.warning(
-                        f"Partially connected. Retrying {i+1}/{partial_reconnect_attempts}."
+                        f"Partially connected. Retrying {i + 1}/{partial_reconnect_attempts}."
                     )
                     self._disconnect_client(server=server)
                     time.sleep(1)

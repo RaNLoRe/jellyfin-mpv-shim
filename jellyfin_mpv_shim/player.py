@@ -1,23 +1,21 @@
 import logging
 import os
+import platform
 import sys
 import time
-
-import platform
-
-from threading import RLock, Lock, Event
-from queue import Queue
 from collections import OrderedDict
+from queue import Queue
+from threading import Event, Lock, RLock
 from typing import TYPE_CHECKING, Optional
 
 from . import conffile
-from .utils import synchronous, Timer, none_fallback, get_resource
 from .conf import settings
-from .menu import OSDMenu
 from .constants import APP_NAME
+from .i18n import _
+from .menu import OSDMenu
 from .syncplay import SyncPlayManager
 from .update_check import UpdateChecker
-from .i18n import _
+from .utils import Timer, get_resource, none_fallback, synchronous
 
 if TYPE_CHECKING:
     from .media import Video as Video_type
@@ -29,7 +27,7 @@ mpv_log = logging.getLogger("mpv")
 discord_presence = False
 if settings.discord_presence:
     try:
-        from .rich_presence import register_join_event, send_presence, clear_presence
+        from .rich_presence import clear_presence, register_join_event, send_presence
 
         discord_presence = True
     except Exception:
@@ -59,6 +57,77 @@ _mpv_errors = (BrokenPipeError,)
 if hasattr(mpv, "ShutdownError"):
     _mpv_errors = (BrokenPipeError, mpv.ShutdownError)
 
+
+def _patch_windows_mpv_startup():
+    if not is_using_ext_mpv or not os.name == "nt":
+        return
+    if getattr(mpv, "_jellyfin_windows_pipe_patch", False):
+        return
+
+    class PatchedMPVProcess(mpv.MPVProcess):
+        def __init__(self, ipc_socket, mpv_location=None, **kwargs):
+            if mpv_location is None:
+                mpv_location = "mpv.exe"
+
+            mpv.log.debug("Staring MPV from {0}.".format(mpv_location))
+            ipc_socket_name = ipc_socket
+            pipe_path = "\\\\.\\pipe\\" + ipc_socket
+
+            mpv.log.debug("Using IPC socket {0} for MPV.".format(pipe_path))
+            self.ipc_socket = pipe_path
+            args = [mpv_location]
+            self._set_default(kwargs, "idle", True)
+            self._set_default(kwargs, "input_ipc_server", ipc_socket_name)
+            self._set_default(kwargs, "input_terminal", False)
+            self._set_default(kwargs, "terminal", False)
+
+            arg_pairs = []
+            for key, value in kwargs.items():
+                if isinstance(value, list):
+                    for v in value:
+                        arg_pairs.append((key, v))
+                else:
+                    arg_pairs.append((key, value))
+
+            args.extend(
+                "--{0}={1}".format(v[0].replace("_", "-"), self._mpv_fmt(v[1]))
+                for v in arg_pairs
+            )
+            self.process = mpv.subprocess.Popen(args)
+
+            pipe_ready = False
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                self.process.poll()
+                if self.process.returncode is not None:
+                    mpv.log.error(
+                        "MPV failed with returncode {0}.".format(
+                            self.process.returncode
+                        )
+                    )
+                    break
+                try:
+                    mpv._winapi.WaitNamedPipe(pipe_path, 100)
+                    pipe_ready = True
+                    mpv.log.debug("Found MPV pipe.")
+                    break
+                except OSError:
+                    time.sleep(0.1)
+
+            if not pipe_ready and self.process.returncode is None:
+                self.process.terminate()
+                raise mpv.MPVError("MPV start timed out.")
+
+            if not pipe_ready or self.process.returncode is not None:
+                self.process.terminate()
+                raise mpv.MPVError("MPV not started.")
+
+    mpv.MPVProcess = PatchedMPVProcess
+    mpv._jellyfin_windows_pipe_patch = True
+
+
+_patch_windows_mpv_startup()
+
 SUBTITLE_POS = {
     "top": 0,
     "bottom": 100,
@@ -81,7 +150,7 @@ def mpv_log_handler(level: str, prefix: str, text: str):
 
 
 def wait_property(
-    instance, name: str, cond=lambda x: True, timeout: Optional[int] = None
+    instance, name: str, cond=lambda _: True, timeout: Optional[int] = None
 ):
     success = True
     event = Event()
@@ -367,17 +436,14 @@ class PlayerManager(object):
             if self.menu.is_menu_shown:
                 self.menu.menu_action("up")
             else:
-                if self.is_in_intro:
-                    self.skip_intro()
-                else:
-                    self.kb_seek("up")
+                self._player.command("osd-auto", "add", "volume", "5")
 
         @keypress(settings.kb_menu_down)
         def menu_down():
             if self.menu.is_menu_shown:
                 self.menu.menu_action("down")
             else:
-                self.kb_seek("down")
+                self._player.command("osd-auto", "add", "volume", "-5")
 
         @keypress(settings.kb_pause)
         def handle_pause():
@@ -850,14 +916,14 @@ class PlayerManager(object):
                     p2 = "absolute"
                     if exact:
                         p2 += "+exact"
-                    self._player.command("seek", offset, p2)
+                    self._player.command("osd-auto", "seek", offset, p2)
                 else:
                     if self.syncplay.is_enabled():
                         self.last_seek = self._player.playback_time + offset
                     if exact:
-                        self._player.command("seek", offset, "exact")
+                        self._player.command("osd-auto", "seek", offset, "exact")
                     else:
-                        self._player.command("seek", offset)
+                        self._player.command("osd-auto", "seek", offset)
         self.timeline_handle()
 
     @synchronous("_lock")
@@ -1184,7 +1250,7 @@ class PlayerManager(object):
                 try:
                     if self.syncplay.is_enabled():
                         self.syncplay.sync_playback_time()
-                except:
+                except Exception:
                     log.error("Error syncing playback time.", exc_info=True)
         except _mpv_errors:
             log.warning("MPV connection lost during timeline update.")
@@ -1378,7 +1444,8 @@ class PlayerManager(object):
                     self._player.command("stop")
                 elif self._player.playback_abort:
                     self._player.force_window = False
-                    self._player.play("")
+                    if not is_using_ext_mpv:
+                        self._player.play("")
                 else:
                     self.upd_player_hide()
         except _mpv_errors:
