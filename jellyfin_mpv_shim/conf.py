@@ -138,6 +138,7 @@ class Settings(SettingsBase):
     health_check_interval: Optional[int] = 300
     skip_intro_always: bool = False
     skip_intro_enable: bool = True
+    seek_to_skip_intro: bool = True
     skip_credits_always: bool = False
     skip_credits_enable: bool = True
     thumbnail_enable: bool = True

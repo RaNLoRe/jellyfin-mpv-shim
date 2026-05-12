@@ -67,11 +67,9 @@ class OSDMenu(object):
         self.menu_selection = 0
         self.menu_tmp = None
         self.mouse_back = False
-        (
-            self.original_osd_color,
-            self.original_osd_size,
-            self.original_osd_border_style,
-        ) = player_manager.get_osd_settings()
+        self.original_osd_color = None
+        self.original_osd_size = None
+        self.original_osd_border_style = None
 
         self.profile_menu = None
         self.profile_manager = None
@@ -122,7 +120,13 @@ class OSDMenu(object):
         self.refresh_menu()
 
     def show_menu(self):
-        self.is_menu_shown = True
+        if not self.is_menu_shown:
+            (
+                self.original_osd_color,
+                self.original_osd_size,
+                self.original_osd_border_style,
+            ) = self.playerManager.get_osd_settings()
+            self.is_menu_shown = True
 
         self.menu_title = _("Main Menu")
         self.menu_selection = 0
@@ -560,6 +564,9 @@ class OSDMenu(object):
                 ),
                 self.get_settings_toggle(_("Always Skip Intros"), "skip_intro_always"),
                 self.get_settings_toggle(_("Ask to Skip Intros"), "skip_intro_enable"),
+                self.get_settings_toggle(
+                    _("Seek to Skip Intros/Credits"), "seek_to_skip_intro"
+                ),
                 self.get_settings_toggle(
                     _("Always Skip Credits"), "skip_credits_always"
                 ),

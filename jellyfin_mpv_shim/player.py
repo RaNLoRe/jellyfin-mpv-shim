@@ -220,7 +220,10 @@ class PlayerManager(object):
         self.fullscreen_disable = False
         self.update_check = UpdateChecker(self)
         self.is_in_intro = False
+        self.current_intro = None
         self.playback_time_before_seek = None
+        self.was_in_intro_before_seek = False
+        self.intro_before_seek = None
         self.trickplay = None
         self._mpv_alive = False
         # Last known playback position; used when MPV exits (e.g. OSC 'x'
@@ -493,19 +496,41 @@ class PlayerManager(object):
             if self.do_not_handle_pause:
                 return
 
-            # Handle intro skip for any forward seek (including custom key bindings)
-            if value:
-                # Seeking started - store current position
-                self.playback_time_before_seek = self._player.playback_time
-            else:
-                # Seeking ended - check if we should skip intro
-                if (
-                    self.is_in_intro
-                    and self.playback_time_before_seek is not None
-                    and self._player.playback_time is not None
-                    and self._player.playback_time > self.playback_time_before_seek
-                ):
-                    self.skip_intro()
+            if settings.seek_to_skip_intro and not self.syncplay.is_enabled():
+                if value:
+                    self.was_in_intro_before_seek = self.is_in_intro
+                    self.playback_time_before_seek = None
+                    self.intro_before_seek = None
+                    if self.was_in_intro_before_seek:
+                        intro = self.current_intro
+                        if intro is not None and (
+                            (intro.type == "Outro" and settings.skip_credits_enable)
+                            or (intro.type != "Outro" and settings.skip_intro_enable)
+                        ):
+                            self.intro_before_seek = intro
+                            self.playback_time_before_seek = (
+                                self._last_playback_position
+                            )
+                else:
+                    play_time = self._player.playback_time
+                    intro = self.intro_before_seek
+                    start_time = self.playback_time_before_seek
+                    self.was_in_intro_before_seek = False
+                    self.intro_before_seek = None
+                    self.playback_time_before_seek = None
+                    if (
+                        intro is not None
+                        and start_time is not None
+                        and play_time is not None
+                        and play_time > start_time + 0.5
+                    ):
+                        if intro.start <= play_time < intro.end:
+                            intro.has_triggered = True
+                            self.skip_intro(intro)
+                        elif play_time >= intro.end:
+                            intro.has_triggered = True
+                            self.is_in_intro = False
+                            self._last_intro_msg_time = time.time()
 
             if self.syncplay.is_enabled():
                 play_time = self._player.playback_time
@@ -621,8 +646,12 @@ class PlayerManager(object):
         if self.timeline_trigger:
             self.timeline_trigger.set()
 
-    def skip_intro(self):
-        _, intro = self._video.get_current_intro(self._player.playback_time)
+    def skip_intro(self, intro=None):
+        if intro is None:
+            _, intro = self._video.get_current_intro(self._player.playback_time)
+
+        if intro is None:
+            return
 
         if not self._player.playback_abort:
             self._player.command("seek", intro.end, "absolute")
@@ -630,6 +659,7 @@ class PlayerManager(object):
         intro.has_triggered = True
         self.timeline_handle()
         self.is_in_intro = False
+        self.current_intro = None
         self._last_intro_msg_time = time.time()
 
     @synchronous("_lock")
@@ -646,6 +676,9 @@ class PlayerManager(object):
                 and self._video is not None
                 and self._player.playback_time is not None
             ):
+                if not self._player.seeking:
+                    self._last_playback_position = self._player.playback_time
+
                 ready_to_skip, intro = self._video.get_current_intro(
                     self._player.playback_time
                 )
@@ -678,19 +711,29 @@ class PlayerManager(object):
                         and should_prompt
                         and time.time() - self._last_intro_msg_time > 3
                     ):
-                        self._player.show_text(
-                            (
+                        if intro.type == "Outro":
+                            prompt = (
                                 _("Seek to Skip Credits")
-                                if intro.type == "Outro"
-                                else _("Seek to Skip Intro")
-                            ),
+                                if settings.seek_to_skip_intro
+                                else _("Skip Credits")
+                            )
+                        else:
+                            prompt = (
+                                _("Seek to Skip Intro")
+                                if settings.seek_to_skip_intro
+                                else _("Skip Intro")
+                            )
+                        self._player.show_text(
+                            prompt,
                             3000,
                             1,
                         )
                         self._last_intro_msg_time = time.time()
                     self.is_in_intro = True
+                    self.current_intro = intro
                 else:
                     self.is_in_intro = False
+                    self.current_intro = None
         except _mpv_errors:
             self._handle_mpv_disconnect()
             return

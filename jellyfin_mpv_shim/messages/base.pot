@@ -410,14 +410,18 @@ msgid "Ask to Skip Intros"
 msgstr ""
 
 #: jellyfin_mpv_shim/menu.py:558
-msgid "Always Skip Credits"
+msgid "Seek to Skip Intros/Credits"
 msgstr ""
 
 #: jellyfin_mpv_shim/menu.py:559
+msgid "Always Skip Credits"
+msgstr ""
+
+#: jellyfin_mpv_shim/menu.py:562
 msgid "Ask to Skip Credits"
 msgstr ""
 
-#: jellyfin_mpv_shim/menu.py:561
+#: jellyfin_mpv_shim/menu.py:565
 msgid "Enable thumbnail previews"
 msgstr ""
 
@@ -434,7 +438,15 @@ msgid "Seek to Skip Credits"
 msgstr ""
 
 #: jellyfin_mpv_shim/player.py:490
+msgid "Skip Credits"
+msgstr ""
+
+#: jellyfin_mpv_shim/player.py:490
 msgid "Seek to Skip Intro"
+msgstr ""
+
+#: jellyfin_mpv_shim/player.py:490
+msgid "Skip Intro"
 msgstr ""
 
 #: jellyfin_mpv_shim/player.py:598
