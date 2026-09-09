@@ -31,6 +31,7 @@ class _Player:
     """Just enough mpv for push_playstate to read through."""
     playback_abort = False
     playback_time = 12.0
+    seeking = False
     duration = 100.0
     pause = False
     volume = 80
@@ -525,7 +526,7 @@ class TestTheButtonSurvivesSeekToSkipBeingOff(unittest.TestCase):
         pm.mpvtk_active = True
         pm._osc_style_resolved = "mpvtk"
         pm.skips = []
-        pm.skip_intro = lambda: pm.skips.append(1)
+        pm.skip_intro = lambda intro=None: pm.skips.append(1)
         pm.syncplay = type("S", (), {"is_enabled": staticmethod(
             lambda: in_group)})()
         pm._player = _Player()
@@ -576,21 +577,13 @@ class TestTheButtonSurvivesSeekToSkipBeingOff(unittest.TestCase):
                         "no HUD and no OSD prompt either: the segment is "
                         "unskippable")
 
-    def test_the_osd_prompt_is_silent_when_seeking_would_not_skip(self):
-        """The message is "Seek to Skip X" and `skip_intro_on_seek` is OFF by
-        default, so on a classic OSC it told the user to make a gesture that
-        does nothing -- for the whole of every intro, every episode.
-
-        Reported: "Seek to skip doesn't seem to actually work via keyboard,
-        but I have 'Skip intro on seek' turned off so the prompt shouldn't
-        appear."
-        """
+    def test_the_fork_keeps_a_neutral_prompt_when_seeking_would_not_skip(self):
+        """Keep segment awareness without advertising a disabled gesture."""
         from jellyfin_mpv_shim.conf import settings
 
         with mock.patch.object(settings, "skip_intro_on_seek", False):
             self._hud_skip_after_update(osc_style="none", segment_intro="ask")
-        self.assertEqual([], self._prompts(),
-                         "the prompt named a gesture that is switched off")
+        self.assertEqual(["Skip Intro"], self._prompts())
 
     def test_the_osd_prompt_returns_when_the_gesture_works(self):
         """The control -- and the half a blanket suppression would break."""
@@ -598,8 +591,12 @@ class TestTheButtonSurvivesSeekToSkipBeingOff(unittest.TestCase):
 
         with mock.patch.object(settings, "skip_intro_on_seek", True):
             self._hud_skip_after_update(osc_style="none", segment_intro="ask")
-        self.assertTrue(self._prompts(),
-                        "seeking skips, but nothing said so")
+        self.assertEqual(["Seek to Skip Intro"], self._prompts())
+
+    def test_custom_osc_group_prompt_does_not_advertise_exempt_seek_gesture(self):
+        self._hud_skip_after_update(in_group=True, osc_style="custom",
+                                   segment_intro="ask", skip_intro_on_seek=True)
+        self.assertEqual(["Skip Intro"], self._prompts())
 
     def test_the_hud_suppresses_the_osd_prompt(self):
         self.assertIsNotNone(
@@ -985,6 +982,11 @@ class ResumingIntoAnIntroDoesNotSkipItTest(unittest.TestCase):
 
     def _seek_round_trip(self, pm, before, after):
         """mpv reports a seek as `seeking` true then false."""
+        from types import SimpleNamespace
+        pm._video = object()
+        pm._intro_seek_context = (pm._video, SimpleNamespace(
+            start=0.0, end=60.0, type="Intro"), before)
+        pm.skip_intro = lambda intro=None: pm.skips.append(1)
         pm._player.playback_time = before
         pm._on_seeking("seeking", True)
         pm._player.playback_time = after

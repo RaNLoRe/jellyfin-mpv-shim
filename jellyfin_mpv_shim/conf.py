@@ -1078,6 +1078,11 @@ class Settings(SettingsBase):
         if not created:
             try:
                 data = json.loads(raw)
+                # The fork's old switch is the same preference under a new name.
+                # An explicit v3 value wins; saving removes the obsolete alias.
+                if "seek_to_skip_intro" in data:
+                    data.setdefault("skip_intro_on_seek", data["seek_to_skip_intro"])
+                    del data["seek_to_skip_intro"]
                 safe_data = self.parse_obj(data)
 
                 # Copy and count items

@@ -309,6 +309,7 @@ class KeyboardRoutingTest(unittest.TestCase):
                 self.pm._player.press_key(key)
             menu_action.assert_not_called()
 
+    @mock.patch.object(player.playerManager, "_osc_style_resolved", "mpvtk")
     def test_the_arrows_are_mpvs_own_until_the_shim_seek_differs(self):
         """The whole point of #16: with a default config the shim's seek IS
         mpv's (`seek 5` / `seek 60`, character for character), so the keys
@@ -324,6 +325,10 @@ class KeyboardRoutingTest(unittest.TestCase):
         from jellyfin_mpv_shim import keysweep
 
         pm = self.pm
+        # This is the upstream HUD policy. Classic/custom players reserve
+        # Right for the legacy intro shortcut (covered by test_fork_compat).
+        pm._refresh_key_section()
+        self.addCleanup(pm._refresh_key_section)
         self.assertFalse(pm._seek_is_ours(), "the default config claims seek")
         with mock.patch.object(pm, "seek") as seek, \
                 mock.patch.object(pm, "kb_seek") as kb_seek:
@@ -359,6 +364,9 @@ class KeyboardRoutingTest(unittest.TestCase):
                     # The OSC's own scrubbing is exempt for two seconds; this
                     # seek is not from it.
                     pm._last_ui_seek_time = 0.0
+                    from types import SimpleNamespace
+                    pm._intro_seek_context = (pm._video, SimpleNamespace(
+                        start=0.0, end=60.0, type="Intro"), 10.0)
                     pm._player.playback_time = 10.0
                     pm._player.fire_property("seeking", True)
                     pm._player.playback_time = 40.0

@@ -693,6 +693,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         self.osc_bridge = OscBridge(self)
         self.is_in_intro = False
         self.playback_time_before_seek = None
+        self._intro_seek_context = None
+        self._pending_intro_seek = None
         # time.time() of the last seek initiated from the jellyfin OSC's
         # own controls (seekbar/buttons); such seeks never intro-skip.
         self._last_ui_seek_time = 0.0
@@ -1757,10 +1759,14 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         if self.do_not_handle_pause:
             return
 
-        # Handle intro skip for any forward seek (including custom key bindings)
+        # Snapshot the segment and position sampled before mpv started seeking.
+        # playback-time may already be the destination when seeking=True arrives.
         if value:
-            # Seeking started - store current position
-            self.playback_time_before_seek = self._player.playback_time
+            self._pending_intro_seek = None
+            if (settings.skip_intro_on_seek
+                    and not self.syncplay.is_enabled()
+                    and time.time() - self._last_ui_seek_time > 2.0):
+                self._pending_intro_seek = self._intro_seek_context
         else:
             # Where a seek landed, now rather than at the next 5 s tick: a
             # seek into the last seconds that ends before a tick otherwise
@@ -1772,19 +1778,25 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
                       if getattr(self, "_mpv_alive", False) else None)
             if landed is not None:
                 self._last_playback_position = landed
-            # Seeking ended - check if we should skip intro. Seeks made
-            # from the jellyfin OSC's own controls are exempt (it has an
-            # explicit skip button; scrubbing must not warp to the end
-            # of the intro), and the whole behavior is a setting.
-            if (
-                settings.skip_intro_on_seek
-                and time.time() - self._last_ui_seek_time > 2.0
-                and self.is_in_intro
-                and self.playback_time_before_seek is not None
-                and self._player.playback_time is not None
-                and self._player.playback_time > self.playback_time_before_seek
-            ):
-                self.skip_intro()
+            context = self._pending_intro_seek
+            self._pending_intro_seek = None
+            self._intro_seek_context = None
+            if (context is not None and settings.skip_intro_on_seek
+                    and not self.syncplay.is_enabled()
+                    and time.time() - self._last_ui_seek_time > 2.0):
+                video, intro, start = context
+                destination = landed
+                if (video is self._video and destination is not None
+                        and conf.segment_action(intro.type) != "off"
+                        and intro.start <= start < intro.end
+                        and destination > start + 0.5):
+                    if intro.start <= destination < intro.end:
+                        self.skip_intro(intro)
+                    elif destination >= intro.end:
+                        # Respect a deliberate jump beyond the original segment.
+                        intro.has_triggered = True
+                        self.is_in_intro = False
+                        self._last_intro_msg_time = time.time()
 
         if self.syncplay.is_enabled():
             play_time = self._player.playback_time
@@ -2138,7 +2150,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         wanted = set()
         for owned in self._key_claims.values():
             wanted |= owned
-        claims = [c for c in self._swept_keys() if c[1] in wanted]
+        claims = [c for c in self._swept_keys()
+                  if c[1] in wanted or self._is_intro_arrow(*c)]
         self._key_actions = {key: (semantic, arg)
                              for key, semantic, arg in claims}
         # Pointer keys are never *claimed* -- that is the renderer's ground
@@ -2161,6 +2174,19 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         except Exception:
             log.debug("could not update the key section", exc_info=True)
 
+    def _is_intro_arrow(self, key, semantic, arg):
+        """The fork's dedicated Right-arrow action, not arbitrary seeking.
+
+        Only claim a key that mpv actually resolves as a forward seek. A
+        custom script/ignore binding keeps ownership. Modified arrow keys
+        remain ordinary seeks; the mpvtk HUD keeps upstream behavior.
+        """
+        style = getattr(self, "_osc_style_resolved", None)
+        return (style is not None and style != "mpvtk"
+                and settings.kb_menu_right is not None
+                and key.lower() == settings.kb_menu_right.lower()
+                and semantic == "seek" and arg[0] > 0)
+
     def _on_claimed_key(self, semantic, key):
         """A claimed key was pressed: carry out what the user had bound,
         through the operation that knows about SyncPlay and about
@@ -2179,6 +2205,18 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
                 self.set_paused(bool(arg))
         elif semantic == "seek":
             amount, exact = arg
+            if self._is_intro_arrow(key, semantic, arg):
+                if self.menu.is_menu_shown:
+                    self.menu.menu_action("right")
+                    return
+                video = self._video
+                position = self._player.playback_time
+                if (video is not None and position is not None
+                        and not self.syncplay.is_enabled()):
+                    _, intro = video.get_current_intro(position)
+                    if intro is not None and conf.segment_action(intro.type) != "off":
+                        self.skip_intro(intro)
+                        return
             # jellyfin-web's variable seek, applied to whatever key the
             # user actually seeks with -- which four fixed arrow bindings
             # never managed. Routed by SIGN, because that is all a binding
@@ -2186,8 +2224,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
             # and which of them was the "left" key is neither recoverable
             # nor needed, since web seek replaces the distance anyway.
             #
-            # Nothing here for skip-intro: `_on_seeking` catches the seek
-            # this is about to make, exactly as it catches mpv's own.
+            # The optional any-forward-seek gesture is separate from the
+            # dedicated arrow above; `_on_seeking` handles that setting.
             if settings.use_web_seek:
                 back, forward = self.get_seek_times()
                 amount = forward if amount > 0 else back
@@ -2397,11 +2435,12 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         if self.timeline_trigger:
             self.timeline_trigger.set()
 
-    def skip_intro(self):
+    def skip_intro(self, intro=None):
         video = self._video
         if video is None:
             return
-        _, intro = video.get_current_intro(self._player.playback_time)
+        if intro is None:
+            _, intro = video.get_current_intro(self._player.playback_time)
         if intro is None:
             return
 
@@ -2411,6 +2450,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         intro.has_triggered = True
         self.timeline_handle()
         self.is_in_intro = False
+        self._intro_seek_context = None
+        self._pending_intro_seek = None
         self._last_intro_msg_time = time.time()
 
     @synchronous("_lock")
@@ -2482,9 +2523,13 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
                 and self._video is not None
                 and self._player.playback_time is not None
             ):
-                ready_to_skip, intro = self._video.get_current_intro(
-                    self._player.playback_time
-                )
+                position = self._player.playback_time
+                ready_to_skip, intro = self._video.get_current_intro(position)
+                if not self._player.seeking:
+                    self._intro_seek_context = (
+                        (self._video, intro, position)
+                        if intro is not None else None
+                    )
 
                 # With the HUD, "ask" mode shows the Skip Intro/Credits
                 # button (scene button while summoned, standalone
@@ -2533,16 +2578,14 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
                     elif (
                         not self.is_in_intro
                         and should_prompt
-                        # The message is "Seek to Skip X", and seeking only
-                        # skips when `skip_intro_on_seek` is on -- which is
-                        # OFF by default. Without this it told every
-                        # classic-OSC user to make a gesture that does
-                        # nothing, for the whole of every intro.
-                        and settings.skip_intro_on_seek
                         and time.time() - self._last_intro_msg_time > 3
                     ):
+                        # Preserve the fork's segment notification even when
+                        # the seek gesture is off. Only advertise that gesture
+                        # when it actually works (never in a SyncPlay group).
+                        label = 2 if settings.skip_intro_on_seek and not in_group else 0
                         self._player.show_text(
-                            segment_labels(intro.type)[2], 3000, 1)
+                            segment_labels(intro.type)[label], 3000, 1)
                         self._last_intro_msg_time = time.time()
                     self.is_in_intro = True
                 else:
@@ -3221,6 +3264,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         # episode that aborts before its first timeline tick).
         self._reached_eof = False
         self._last_playback_position = 0
+        self._intro_seek_context = None
+        self._pending_intro_seek = None
         # Likewise the stall window: a position carried over from the previous
         # file would otherwise be compared against the new one's timeline.
         self._stall_position = None

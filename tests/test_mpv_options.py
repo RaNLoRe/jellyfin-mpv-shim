@@ -597,6 +597,24 @@ class SourceHeightTest(unittest.TestCase):
 
 
 class HwdecConfigPinTest(SettingsCase):
+    def test_external_config_controls_hwdec_at_startup_and_per_file(self):
+        self.set(mpv_ext=True, mpv_ext_no_ovr=True, hwdec="no")
+        with mock.patch("jellyfin_mpv_shim.args.get_args", return_value=mock.Mock(disable_hwdec=False)):
+            self.assertNotIn("hwdec", self.build())
+            for height in (None, 1080, 2160):
+                self.assertIsNone(mpv_options.hwdec_for(height, needs_copy=True))
+
+    def test_explicit_disable_hwdec_still_overrides_external_config(self):
+        self.set(mpv_ext=True, mpv_ext_no_ovr=True)
+        with mock.patch("jellyfin_mpv_shim.args.get_args", return_value=mock.Mock(disable_hwdec=True)):
+            self.assertEqual("no", mpv_options.hwdec_for(2160))
+
+    def test_shader_pack_cannot_override_external_config_hwdec(self):
+        from jellyfin_mpv_shim.video_profile import _hwdec_taken_out_of_our_hands
+        self.set(mpv_ext=True, mpv_ext_no_ovr=True)
+        with mock.patch("jellyfin_mpv_shim.args.get_args", return_value=mock.Mock(disable_hwdec=False)):
+            self.assertTrue(_hwdec_taken_out_of_our_hands())
+
     """The user's own mpv.conf outranks everything here.
 
     Silently overriding an option somebody wrote into mpv.conf is the

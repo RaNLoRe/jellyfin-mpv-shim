@@ -380,6 +380,7 @@ class FakeMPV:
         # Scalar player properties with defaults matching an idle player.
         self.playback_abort = True
         self.playback_time = None
+        self.seeking = False
         self.duration = None
         self.pause = False
         self.volume = 100
@@ -1278,6 +1279,8 @@ def build_player(player_module, video=None, test=None):
     pm.fullscreen_disable = False
     pm.is_in_intro = False
     pm.playback_time_before_seek = None
+    pm._intro_seek_context = None
+    pm._pending_intro_seek = None
     pm.trickplay = None
     pm._mpv_alive = True
     pm._idle_quit = False

@@ -112,7 +112,8 @@ def _hwdec_taken_out_of_our_hands():
             return True
     except Exception:
         log.debug("could not read the hwdec override", exc_info=True)
-    return hwdec_pinned_by_config() is not None
+    return ((settings.mpv_ext and settings.mpv_ext_no_ovr)
+            or hwdec_pinned_by_config() is not None)
 
 
 class VideoProfileManager:

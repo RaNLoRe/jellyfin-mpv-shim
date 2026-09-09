@@ -1039,7 +1039,7 @@ class WindowMixin:
             log.debug("browse_yield failed", exc_info=True)
 
     def force_window(self, enabled: bool):
-        from .player import _mpv_errors
+        from .player import _mpv_errors, is_using_ext_mpv
 
         if not self._mpv_alive:
             if not enabled:
@@ -1062,7 +1062,8 @@ class WindowMixin:
                     self._player.command("stop")
                 elif self._player.playback_abort:
                     self._set_force_window(False)
-                    self._player.play("")
+                    if not is_using_ext_mpv:
+                        self._player.play("")
                 else:
                     self.upd_player_hide()
         except _mpv_errors:
