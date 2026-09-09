@@ -1,5 +1,14 @@
 # RaNLoRe fork: v3 upgrade
 
+Stats-key follow-up: `i` now uses mpv's native temporary stats display and
+configured duration, while `Shift+i` retains the persistent toggle. v3 had
+routed both keys to the persistent toggle whenever the library UI was active,
+including custom-OSC playback. A toggle during an active temporary display
+does not arm a false persistent-state flag; returning to the library still
+clears tracked persistent stats. Temporary stats expire on mpv's own timer.
+Verified with 103 shortcut, key-claim and picture-option tests, plus three
+real-mpv cycles of timed expiry, mixed keys and persistent-overlay cleanup.
+
 Prepared 2026-09-09 in an isolated worktree, initially based on upstream
 `v3.0.0` (`9970b2dc4a91f0c96a9fa5a1fcecf6a69331e315`), then updated at the
 user's request to `upstream/master` at

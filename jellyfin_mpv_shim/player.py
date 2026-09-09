@@ -1715,11 +1715,11 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
     def _stats_key(self, oneshot):
         if (self.mpvtk_active and self._video is not None
                 and not self._current_is_audio()):
-            # A video is on screen under the in-window HUD: track the
-            # overlay so clear_stats() can hide it when the library
-            # returns. Audio keeps the browser up (no picture to
+            # A video is on screen: retain mpv's temporary/persistent
+            # distinction and track persistent stats for library cleanup.
+            # Audio keeps the browser up (no picture to
             # annotate), so it falls through to the swallow below.
-            self.put_task(self.toggle_stats)
+            self.put_task(self.show_stats, oneshot)
         elif not self.mpvtk_active:
             self._player.command(
                 "script-binding",
@@ -3502,11 +3502,31 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
             self._handle_mpv_disconnect()
         log.info("stop_and_close: done")
 
+    def show_stats(self, oneshot=False):
+        """Let stats.lua own the temporary display and its configured timer."""
+        if not self._mpv_alive:
+            return
+        if self.mpvtk_active and self._library_showing():
+            return
+        if oneshot:
+            self._player.command("script-binding", "stats/display-stats")
+            return
+        # stats.lua ignores a toggle while its one-shot timer is running.
+        # Do not record that ignored command as a persistent display: after
+        # expiry, clear_stats would otherwise turn the overlay back ON.
+        if not self._stats_shown and any(
+            b.get("owner") == "stats" and b.get("priority", -1) >= 0
+            and "script-binding stats/__forced_" in b.get("cmd", "")
+            for b in self._player.input_bindings
+        ):
+            return
+        self.toggle_stats()
+
     def toggle_stats(self):
         """Toggle mpv's "Playback Data" (stats.lua) overlay, tracking its
         state.
 
-        Reached from the `i` key and from the *lua* OSC's gear sheet. The
+        Reached from Shift+i and from the *lua* OSC's gear sheet. The
         mpvtk HUD's gear no longer has an entry for it: that row is
         "Playback Info" now, which is ours and answers what the server is
         sending rather than what the decoder is doing (#10). Everything
