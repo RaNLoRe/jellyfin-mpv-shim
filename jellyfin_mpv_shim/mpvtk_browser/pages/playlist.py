@@ -92,11 +92,9 @@ class PlaylistPage(Page):
                                             items=items),
                 art=True, scroll_id="playlist", head_h=70, menu=True)]
         else:
-            # `items`, not `data`: unsupported entries were rendering as
-            # tiles whose click did something unrelated. And a click plays
-            # the PLAYLIST from that point — going through the tile's normal
-            # open meant Play on the detail page queued the item's series
-            # instead, silently abandoning the playlist the user was in.
+            # Card clicks open details, like other library grids. The play
+            # chip retains playlist context via TilesMixin._play_tile and
+            # starts this exact entry in the full playlist queue.
             # Shaped by its own artwork, like every other grid in the app
             # (and like jellyfin-web's cardBuilder). This was the one that
             # was not: a playlist can hold anything, and a playlist of
@@ -119,9 +117,7 @@ class PlaylistPage(Page):
                 # Watching card, which is a pointer back to the show; a
                 # playlist entry is not one.
                 inherit=False,
-                scroll_id="playlist", head_h=70,
-                on_click=lambda it: actions.play_list(
-                    ids, server, items.index(it), audio=False, items=items))
+                scroll_id="playlist", head_h=70)
         return VScroll(Column([header, Spacer(h=2)] + body,
                               pad=(pad, chrome.CONTENT_PAD),
                               gap=GRID_GAP, align="stretch"),

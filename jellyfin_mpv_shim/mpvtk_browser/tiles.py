@@ -224,6 +224,21 @@ class TilesMixin:
         page -- these are different questions for anything with contents."""
         server = self.route.get("server") or self.server
         t = item.get("Type")
+        if self.route.get("kind") == "playlist" and t in PLAYLIST_SUPPORTED_TYPES:
+            # The chip plays this occurrence in the playlist; the card itself
+            # opens details. Re-read the snapshot on activation, because an
+            # entry can move while its card remains visible.
+            items = [entry for entry in (self.route.get("_data") or [])
+                     if entry.get("Id") and entry.get("Type") in PLAYLIST_SUPPORTED_TYPES]
+            key = item.get("PlaylistItemId")
+            for index, entry in enumerate(items):
+                if ((key and entry.get("PlaylistItemId") == key)
+                        or (not key and entry is item)):
+                    self._actions.play_list(
+                        [entry["Id"] for entry in items], server, index,
+                        audio=launches_as_audio(entry), items=items)
+                    break
+            return
         if t == "Series":
             # Next Up, not the whole series from episode one: it is what
             # jellyfin-web's overlay button does on a series card, and the
@@ -327,11 +342,16 @@ class TilesMixin:
             # single-item types -- a container's Play resolves to a queue and
             # has no one position to carry.
             pos = (ud.get("PlaybackPositionTicks") or 0) if t in PLAYABLE_TYPES else 0
+            series_order = (self.route.get("kind") == "playlist"
+                            and t == "Episode" and bool(item.get("SeriesId")))
             if pos > 0:
-                out.append((_("Resume"), "play_arrow", "play"))
-                out.append((_("Play from beginning"), "first_page", "restart"))
+                out.append((_("Resume episode (series order)") if series_order else
+                            _("Resume"), "play_arrow", "play"))
+                out.append((_("Restart episode (series order)") if series_order else
+                            _("Play from beginning"), "first_page", "restart"))
             else:
-                out.append((_("Play"), "play_arrow", "play"))
+                out.append((_("Play episode (series order)") if series_order else
+                            _("Play"), "play_arrow", "play"))
             out.append((_("Add to play queue"), "playlist_add", "queue"))
             # Only while something is playing: with an idle player both
             # entries do the same thing (start these items), and offering

@@ -186,14 +186,14 @@ class ItemActions:
         the entry actually being started, as the Tk browser does —
         without it, clicking a half-watched entry restarted it from zero.
 
-        The chosen entry is re-located by id after dropping empty ones:
-        filtering first and trusting the caller's index shifted the queue
-        out from under the entry that was clicked.
+        Preserve the selected occurrence while dropping empty ids. Looking
+        it up by media id would jump to the first duplicate in a playlist.
 
         ``pause_stills`` says whether a photo at the head of the queue opens
         paused -- true for "show me this picture", false for "run the
         slideshow". See PlayerManager.play."""
-        start_id = ids[start_index] if 0 <= start_index < len(ids) else None
+        pos = (sum(bool(i) for i in ids[:start_index])
+               if 0 <= start_index < len(ids) and ids[start_index] else 0)
         offset = None
         title = ""
         if items is not None and 0 <= start_index < len(items):
@@ -204,10 +204,6 @@ class ItemActions:
         ids = [i for i in ids if i]
         if not ids:
             return
-        try:
-            pos = ids.index(start_id)
-        except ValueError:
-            pos = 0
         self._on_launch(audio=audio, title=title)
         self._launch(
             lambda ctl: ctl.play_list(ids, server, pos, offset_ticks=offset,

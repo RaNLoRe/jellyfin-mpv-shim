@@ -7401,3 +7401,18 @@ msgstr ""
 #: jellyfin_mpv_shim/video_profile.py
 msgid "Select Shader Profile"
 msgstr ""
+
+#: jellyfin_mpv_shim/mpvtk_browser/tiles.py
+#. Episode context-menu action. Starts this episode and continues in the TV series' episode order, rather than the containing playlist's order.
+msgid "Play episode (series order)"
+msgstr ""
+
+#: jellyfin_mpv_shim/mpvtk_browser/tiles.py
+#. Episode context-menu action. Resumes this episode at its saved position, then continues in the TV series' episode order rather than playlist order.
+msgid "Resume episode (series order)"
+msgstr ""
+
+#: jellyfin_mpv_shim/mpvtk_browser/tiles.py
+#. Episode context-menu action. Starts this episode from the beginning, then continues in the TV series' episode order rather than playlist order.
+msgid "Restart episode (series order)"
+msgstr ""
