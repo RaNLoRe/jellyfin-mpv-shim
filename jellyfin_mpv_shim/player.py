@@ -2263,6 +2263,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
                 self._on_claimed_key(args[1], args[2])
             elif args[0] == self.MENU_MESSAGE and len(args) >= 2:
                 self.menu.menu_action(args[1])
+            elif args[0] == "jms-queue" and len(args) == 2:
+                self.put_task(self._handle_queue_bridge, args[1])
             elif args[0] == "shim-trickplay-need" and len(args) >= 2:
                 # A preview was asked for at a position the loaded window
                 # does not cover. Only the OSC side knows where the pointer
@@ -2277,6 +2279,14 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
                     self._lua_probe.set()
         except Exception:
             log.warning("Error when processing client-message.", exc_info=True)
+
+    @synchronous("_lock")
+    def _handle_queue_bridge(self, raw):
+        from .queue_bridge import QueueBridge
+
+        if not hasattr(self, "_queue_bridge"):
+            self._queue_bridge = QueueBridge()
+        self._queue_bridge.handle(self, raw)
 
     def _notify_mpv_gone(self):
         handler = self.on_mpv_gone

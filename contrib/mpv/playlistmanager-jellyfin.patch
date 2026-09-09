@@ -1,0 +1,148 @@
+diff --git a/scripts/playlistmanager.lua b/scripts/playlistmanager.lua
+index cfa4f75..22f8b58 100644
+--- a/scripts/playlistmanager.lua
++++ b/scripts/playlistmanager.lua
+@@ -1,3 +1,13 @@
++-- Adapt only this script when launched by Jellyfin MPV Shim.
++local adapter_path = mp.find_config_file("script-modules/jellyfin_queue_adapter.lua")
++local mp, jellyfin_queue = mp, {
++    active = function() return false end, ready = function() return true end,
++    unsupported = function() return false end, listen = function() end,
++}
++if adapter_path then
++    mp, jellyfin_queue = dofile(adapter_path).wrap(mp, require("mp.utils"))
++end
++
+ local settings = {
+     --navigation keybindings force override only while playlist is visible
+     --if "no" then you can display the playlist by any of the navigation keys
+@@ -876,6 +886,7 @@ function toggle_playlist(show_function)
+ end
+ 
+ function showplaylist(duration)
++    if not jellyfin_queue.ready() then return end
+     refresh_globals()
+     if plen == 0 then return end
+     if not playlist_visible and settings.reset_cursor_on_open then
+@@ -1121,6 +1132,7 @@ end
+ --Creates a playlist of all files in directory, will keep the order and position
+ --For exaple, Folder has 12 files, you open the 5th file and run this, the remaining 7 are added behind the 5th file and prior 4 files before it
+ function playlist(force_dir)
++    if jellyfin_queue.unsupported() then return end
+     refresh_globals()
+     if not directory and plen > 0 then return end
+     local hasfile = true
+@@ -1299,6 +1311,7 @@ function activate_playlist_name_prompt()
+ end
+ 
+ function activate_playlist_save()
++    if jellyfin_queue.unsupported() then return end
+     if settings.playlist_save_interactive then
+         remove_keybinds()
+         activate_playlist_name_prompt()
+@@ -1308,6 +1321,7 @@ function activate_playlist_save()
+ end
+ 
+ function select_playlist()
++    if jellyfin_queue.unsupported() then return end
+     remove_keybinds()
+     local save_path = get_playlist_save_path()
+     local files, err = utils.readdir(save_path, "files")
+@@ -1344,6 +1358,7 @@ end
+ 
+ --saves the current playlist into a m3u file
+ function save_playlist(filename)
++    if jellyfin_queue.unsupported() then return end
+     local length = mp.get_property_number('playlist-count', 0)
+     if length == 0 then return end
+ 
+@@ -1414,6 +1429,25 @@ end
+ 
+ -- fast sort algo from https://github.com/zsugabubus/dotfiles/blob/master/.config/mpv/scripts/playlist-filtersort.lua
+ function sortplaylist(startover)
++    if jellyfin_queue.active() then
++        -- Remote queue entries have titles, not local filesystem dates/sizes.
++        if sort_mode > 2 then sort_mode = 1 end
++        local entries = mp.get_property_native('playlist')
++        if #entries < 2 then return false end
++        local indexes, order = {}, {}
++        for i, item in ipairs(entries) do
++            indexes[i] = i
++            item.string = item.title
++        end
++        local compare = sort_modes[sort_mode].sort_fn
++        table.sort(indexes, function(a, b)
++            if compare(a, b, entries) then return true end
++            if compare(b, a, entries) then return false end
++            return a < b -- equal titles retain their prior order
++        end)
++        for i, index in ipairs(indexes) do order[i] = entries[index].id end
++        return jellyfin_queue.reorder(order)
++    end
+     local playlist = mp.get_property_native('playlist')
+     if #playlist < 2 then return end
+ 
+@@ -1465,12 +1499,17 @@ function sortplaylist(startover)
+ end
+ 
+ function sortplaylist_by_next_mode()
++    if jellyfin_queue.active() then
++        if sortplaylist() then sort_mode = sort_mode % 2 + 1 end
++        return
++    end
+     sortplaylist()
+     sort_mode = sort_mode + 1
+     if sort_mode > #sort_modes then sort_mode = 1 end
+ end
+ 
+ function reverseplaylist()
++    if jellyfin_queue.active() then return jellyfin_queue.reverse() end
+     local length = mp.get_property_number('playlist-count', 0)
+     if length < 2 then return end
+     for outer = 1, length - 1, 1 do
+@@ -1485,6 +1524,7 @@ function reverseplaylist()
+ end
+ 
+ function shuffleplaylist()
++    if jellyfin_queue.active() then return jellyfin_queue.shuffle() end
+     refresh_globals()
+     if plen < 2 then return end
+     mp.command("playlist-shuffle")
+@@ -1670,6 +1710,7 @@ function local_fetching_throttler()
+ end
+ 
+ function resolve_titles()
++    if jellyfin_queue.active() then return end
+     if settings.prefer_titles == 'none' then return end
+     if not settings.resolve_url_titles and not settings.resolve_local_titles then return end
+ 
+@@ -1868,3 +1909,29 @@ mp.register_event("start-file", on_start_file)
+ mp.register_event("file-loaded", on_file_loaded)
+ mp.register_event("end-file", on_end_file)
+ mp.add_hook("on_preloaded", 50, on_preloaded_hook)
++
++-- Keep the same overlay, cursor and dynamic key bindings; only its data source
++-- changes. Entry identities retain the cursor across queue edits and duplicates.
++jellyfin_queue.listen(function(previous, current)
++    local changed = not previous or previous.current ~= current.current
++        or #previous.items ~= #current.items
++    if not changed then
++        for i, item in ipairs(current.items) do
++            local old = previous.items[i]
++            if old.entry ~= item.entry or old.title ~= item.title then changed = true; break end
++        end
++    end
++    if not changed then return end
++    local wanted = previous and previous.items[cursor + 1]
++    wanted = current.focus or (wanted and wanted.entry)
++    if not previous or previous.current ~= current.current then wanted = current.current end
++    cursor = math.max(0, math.min(cursor, #current.items - 1))
++    for i, item in ipairs(current.items) do
++        if item.entry == wanted then cursor = i - 1; break end
++    end
++    if not current.focus or not previous or previous.current ~= current.current then selection = nil end
++    if #current.items == 0 then remove_keybinds() else refresh_UI() end
++end)
++mp.add_periodic_timer(1, function()
++    if jellyfin_queue.active() then jellyfin_queue.refresh() end
++end)
