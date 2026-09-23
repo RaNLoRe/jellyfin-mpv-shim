@@ -704,6 +704,7 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         self._hud_skip = None
         self._osc_script_loaded = False
         self._mpv_alive = False
+        self._shutting_down = False
         # True when mpv was terminated intentionally to save resources while
         # idle (mpv_idle_quit), as opposed to a crash / user-close. Lets the
         # shutdown path stay silent — there's no session to report. Cleared
@@ -1083,14 +1084,23 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
             mpv_guard.arm(player)
             return player
 
+    @synchronous("_lock")
     def _init_mpv(self):
+        # Tray activation and browser callbacks can both request a re-open.
+        # Re-check under the same lock as playback/idle-quit: a second caller
+        # must reuse the handle, never overwrite a live process on the IPC pipe.
+        if self._mpv_alive or self._shutting_down:
+            return
         # Re-open reuses this method; drop the previous instance's trickplay
         # thread first so recovery/idle cycles don't leak it.
         # getattr: _player isn't bound until the first init finishes.
         reopen = getattr(self, "_player", None) is not None
         wlog.info("CREATE mpv (%s) <- %s",
-                  "re-open" if reopen else "first", player_window._caller())
+                  "re-open" if reopen else "first", player_window._caller(3))
         self._teardown_player()
+        # Keep intentional shutdown events suppressed until the old event
+        # thread has finished. Browser re-opens need this reset too.
+        self._idle_quit = False
 
         osc_style = self._effective_osc_style()
 
@@ -5029,7 +5039,6 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         trigger."""
         if not self._mpv_alive:
             wlog.info("mpv is not running; re-creating it for playback")
-            self._idle_quit = False
             self._init_mpv()
 
     @synchronous("_lock")
@@ -5163,6 +5172,11 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
 
 
     def terminate(self):
+        # Serialize against a re-open already in flight, then forbid new ones.
+        # Stop/volume/disconnect notifications can otherwise bring the browser
+        # back while the app is quitting and leave a fresh mpv orphaned.
+        with self._lock:
+            self._shutting_down = True
         # Before stop(): stopping can tear the window down, and the size has
         # to be read while it still exists.
         self._save_window_geometry()

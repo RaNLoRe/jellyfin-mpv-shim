@@ -56,6 +56,7 @@ class KioskFullscreenTest(unittest.TestCase):
         pm._video = video
         pm._showing_browse_bg = False
         pm._mpv_alive = True
+        pm._shutting_down = False
         # Not mid-load. set_browse_window consults this before issuing `stop`,
         # because _video is not set until a start has already succeeded.
         pm._loading = False

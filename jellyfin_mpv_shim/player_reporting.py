@@ -86,6 +86,8 @@ class ReportingMixin:
         # called. It was five until `pause_ignore` came off the list -- which
         # is the argument for keeping it.
         _player: Any
+        _mpv_alive: bool
+        _shutting_down: bool
         _video: Any
         _reporter: Any
         _session_ready: Any
@@ -109,6 +111,13 @@ class ReportingMixin:
         bar refresh must never disturb playback. A ``stopped`` payload tells the
         bar to hide."""
         from .player import _mpv_errors
+
+        # Initial volume/mute observations arrive during _init_mpv, before the
+        # handle is ready. Reporting them as "stopped" re-enters the browser's
+        # window creation path from mpv's event thread. Do not block that thread
+        # on the initialization lock, or revive the browser during app exit.
+        if self._shutting_down or (not self._mpv_alive and not stopped):
+            return
 
         cb = self.on_playstate
         if cb is None:

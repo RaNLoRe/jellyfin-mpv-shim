@@ -27,6 +27,15 @@ from jellyfin_mpv_shim.conf import settings  # noqa: E402
 from jellyfin_mpv_shim.player import PlayerManager  # noqa: E402
 
 
+def _ready_player():
+    # These payload tests model an initialized player, not startup/shutdown.
+    pm = PlayerManager.__new__(PlayerManager)
+    pm._mpv_alive = True
+    pm._shutting_down = False
+    pm._start_in_progress = False
+    return pm
+
+
 class _Player:
     """Just enough mpv for push_playstate to read through."""
     playback_abort = False
@@ -88,7 +97,7 @@ class _Video:
 def snapshot(item):
     """Run the real push_playstate over a fake player and return the dict."""
     got = []
-    pm = PlayerManager.__new__(PlayerManager)
+    pm = _ready_player()
     pm.on_playstate = got.append
     pm._video = _Video(item)
     pm._player = _Player()
@@ -199,7 +208,7 @@ class TestAStartInFlightIsNotAStop(unittest.TestCase):
 
     def _push(self, video=None, starting=False, stopped=False):
         got = []
-        pm = PlayerManager.__new__(PlayerManager)
+        pm = _ready_player()
         pm.on_playstate = got.append
         pm._video = video
         pm._player = _Player()
@@ -345,8 +354,7 @@ class TestChaptersRideTheSnapshot(unittest.TestCase):
 
     def _snapshot(self, player):
         got = []
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm.on_playstate = got.append
         pm._video = _Video(AUDIOBOOK)
         pm._player = player
@@ -413,8 +421,7 @@ class TestTheServerTheItemCameFrom(unittest.TestCase):
         self.addCleanup(lambda: setattr(clients_mod, "clientManager", real))
 
         got = []
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm.on_playstate = got.append
         video = _Video(MOVIE)
         video.client = client
@@ -474,8 +481,7 @@ class TestSkipButtonIsIndependentOfSeekToSkip(unittest.TestCase):
 
     def _label(self, seg_type):
         got = []
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm.on_playstate = got.append
         pm._video = _Video(EPISODE)
         pm._player = _Player()
@@ -515,8 +521,7 @@ class TestTheButtonSurvivesSeekToSkipBeingOff(unittest.TestCase):
         has_triggered = False
 
     def _pm(self, in_group=False, ready=False):
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm.evt_queue = _EmptyQueue()
         pm._pump_trickplay = lambda: None
         pm.push_playstate = lambda: None
@@ -750,8 +755,7 @@ class TestVolumeAndMuteReachTheUI(unittest.TestCase):
 
     def test_the_handler_pushes_a_snapshot(self):
         got = []
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm.on_playstate = got.append
         pm._video = _Video({"Name": "x"})
         pm._player = _Player()
@@ -870,8 +874,7 @@ class TestNegativeAbsoluteSeekIsClamped(unittest.TestCase):
             def __init__(self): self.cmds = []
             def command(self, *a): self.cmds.append(a)
 
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm._lock = threading.RLock()
         pm._player = FakePlayer()
         pm.syncplay = type("S", (), {"is_enabled": lambda self: False})()
@@ -921,8 +924,7 @@ class TestNoPlayerControls(unittest.TestCase):
     if you later chose the mpv one."""
 
     def _pm(self, style):
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm._osc_style_resolved = style
         return pm
 
@@ -966,8 +968,7 @@ class ResumingIntoAnIntroDoesNotSkipItTest(unittest.TestCase):
     """
 
     def _pm(self):
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm._player = _Player()
         pm.do_not_handle_pause = False
         pm.is_in_intro = True
@@ -1320,8 +1321,7 @@ class LoopFileNeverOutlivesAudioTest(unittest.TestCase):
         ever starts asking mpv, the write above has to move back."""
         from jellyfin_mpv_shim.player import PlayerManager
 
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         pm._video = type("V", (), {"item": {"Type": "Episode",
                                             "MediaType": "Video"}})()
         self.assertFalse(pm._current_is_audio())
@@ -1341,8 +1341,7 @@ class LoopFileNeverOutlivesAudioTest(unittest.TestCase):
         """
         from jellyfin_mpv_shim.player import PlayerManager, _item_is_audio
 
-        pm = PlayerManager.__new__(PlayerManager)
-        pm._start_in_progress = False
+        pm = _ready_player()
         audio = type("V", (), {"item": {"Type": "Audio",
                                         "MediaType": "Audio"}})()
         film = type("V", (), {"item": {"Type": "Movie",

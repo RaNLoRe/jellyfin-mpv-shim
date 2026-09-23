@@ -74,6 +74,105 @@ def _wait_true(predicate, timeout=1.0):
     return predicate()
 
 
+class BrowserReopenRaceTest(unittest.TestCase):
+    def test_initial_volume_notification_does_not_reopen_browser(self):
+        pm = h.build_player(player_module, test=self)
+        original_bind = pm._bind_mpv_handlers
+        states = []
+
+        def browser(state):
+            states.append(state)
+            if len(states) == 1:
+                pm.set_browse_window(True)
+
+        def bind_with_initial_volume():
+            original_bind()
+            pm._on_volume_change("volume", 100)
+
+        pm.on_playstate = browser
+        with mock.patch.object(pm, "_bind_mpv_handlers", bind_with_initial_volume), \
+                mock.patch.object(pm, "_construct_mpv", wraps=pm._construct_mpv) as create:
+            for cycle in range(3):
+                pm._mpv_alive = False
+                pm._idle_quit = True
+                pm.set_browse_window(True)
+                self.assertEqual(create.call_count, cycle + 1)
+                self.assertFalse(pm._idle_quit)
+                self.assertEqual(states, [])
+                self.assertTrue(pm._mpv_alive)
+            # A ready player's volume event must still update the browser.
+            pm._on_volume_change("volume", 90)
+            self.assertEqual(states, [{"stopped": True}])
+            self.assertEqual(create.call_count, 3)
+
+    def test_overlapping_creation_requests_share_one_player(self):
+        pm = h.build_player(player_module, test=self)
+        pm._mpv_alive = False
+        entered, release = threading.Event(), threading.Event()
+        original = pm._construct_mpv
+        errors = []
+
+        def construct(*args, **kwargs):
+            entered.set()
+            if not release.wait(2):
+                raise AssertionError("constructor not released")
+            return original(*args, **kwargs)
+
+        def reopen():
+            try:
+                pm._init_mpv()
+            except Exception as exc:
+                errors.append(exc)
+
+        with mock.patch.object(pm, "_construct_mpv", side_effect=construct) as create:
+            first = threading.Thread(target=reopen)
+            second = threading.Thread(target=reopen)
+            first.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                second.start()
+            finally:
+                release.set()
+                first.join(3)
+                if second.ident is not None:
+                    second.join(3)
+            self.assertFalse(first.is_alive())
+            self.assertFalse(second.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(create.call_count, 1)
+
+    def test_shutdown_callbacks_cannot_recreate_player(self):
+        pm = h.build_player(player_module, test=self)
+        states = []
+        pm.on_playstate = states.append
+        pm.stop = lambda: pm.push_playstate(stopped=True)
+        pm._reporter = mock.Mock()
+        pm.terminate()
+        pm._mpv_alive = False
+        with mock.patch.object(pm, "_construct_mpv") as create:
+            pm._on_volume_change("volume", 100)
+            pm.push_playstate(stopped=True)
+            pm.set_browse_window(True)
+            pm.force_window(True)
+            pm._ensure_mpv()
+            create.assert_not_called()
+        self.assertEqual(states, [])
+
+    def test_idle_shutdown_stays_suppressed_until_termination_finishes(self):
+        pm = h.build_player(player_module, test=self)
+        pm._mpv_alive = False
+        pm._idle_quit = True
+        term = mock.Mock()
+        term.is_alive.side_effect = [True, False]
+        observed = []
+        term.join.side_effect = lambda **kw: observed.append(pm._idle_quit)
+        pm._terminate_thread = term
+        pm._ensure_mpv()
+        self.assertEqual(observed, [True])
+        self.assertFalse(pm._idle_quit)
+        self.assertTrue(pm._mpv_alive)
+
+
 class TeardownLeakTest(unittest.TestCase):
     """The real leak the refactor fixed: re-opening mpv recreated the trickplay
     worker without stopping the old one — a thread leaked every cycle."""

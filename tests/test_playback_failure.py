@@ -408,6 +408,7 @@ class BrowseWindowMustNotAbortALoadTest(unittest.TestCase):
 
         pm = PlayerManager.__new__(PlayerManager)
         pm._mpv_alive = True
+        pm._shutting_down = False
         pm._video = None
         pm._loading = False
         pm._showing_browse_bg = False
@@ -496,6 +497,7 @@ class AbortedStartActuallyStopsMpvTest(unittest.TestCase):
 
         pm = PlayerManager.__new__(PlayerManager)
         pm._mpv_alive = True
+        pm._shutting_down = False
         pm._video = None
         pm._showing_browse_bg = False
         # A browse window that deferred its stop while this start was in
