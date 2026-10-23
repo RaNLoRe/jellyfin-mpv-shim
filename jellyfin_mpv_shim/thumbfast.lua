@@ -75,8 +75,16 @@ local function drawn_size()
     return math.floor(img_width * k + 0.5), math.floor(img_height * k + 0.5), k
 end
 
+-- Compatibility with the fork's custom OSC. Keep the notification alongside
+-- every state transition, including stock-OSC previews and window misses.
+local function set_img_shown(value)
+    img_is_shown = value
+    mp.commandv("script-message", "osc-thumb-is-shown", tostring(value))
+end
+
 function send_thumbfast_message()
     local w, h, k = drawn_size()
+    mp.commandv("script-message", "osc-thumb-overlay-id", tostring(img_overlay_id))
     local json, err = utils.format_json({
         width = w,
         height = h,
@@ -116,7 +124,7 @@ function client_message_handler(event)
         if img_is_shown
         then
             mp.commandv("overlay-remove", 46)
-            img_is_shown = false
+            set_img_shown(false)
         end
         send_thumbfast_message()
     elseif event_name == "shim-trickplay-bif"
@@ -213,7 +221,7 @@ function client_message_handler(event)
                         end
                     elseif img_is_shown then
                         mp.commandv("overlay-remove", img_overlay_id)
-                        img_is_shown = false
+                        set_img_shown(false)
                         img_last_frame = -1
                     end
                     return
@@ -246,7 +254,7 @@ function client_message_handler(event)
             -- check always passed.)
             if frame ~= img_last_frame or x ~= img_last_x or y ~= img_last_y
                     or k ~= img_last_k then
-                img_is_shown = true
+                set_img_shown(true)
                 img_last_frame = frame
                 img_last_x = x
                 img_last_y = y
@@ -268,7 +276,7 @@ function client_message_handler(event)
         then
             dbg("overlay-remove (clear)")
             mp.commandv("overlay-remove", img_overlay_id)
-            img_is_shown = false
+            set_img_shown(false)
             img_last_frame = -1
             img_last_x = nil
             img_last_y = nil
@@ -305,7 +313,7 @@ local function on_draw_preview(_, req)
     if type(req) ~= "table" then
         if img_is_shown then
             mp.commandv("overlay-remove", img_overlay_id)
-            img_is_shown = false
+            set_img_shown(false)
             img_last_frame = -1
             img_last_x = nil
             img_last_y = nil

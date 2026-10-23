@@ -382,5 +382,46 @@ eq(overlay_cmd(), nil, "drew a frame with no position and nobody to tell")
 
 -- ------------------------------------------------------------ summary
 
+local function notification(name)
+    local value
+    for _, c in ipairs(fake.log.commands) do
+        if c[1] == "script-message" and c[2] == name then value = c[3] end
+    end
+    return value
+end
+
+for cycle = 1, 3 do
+    fake.log.commands = {}
+    whole(10)
+    eq(notification("osc-thumb-overlay-id"), "46", "custom OSC gets overlay id")
+    thumb(20)
+    eq(notification("osc-thumb-is-shown"), "true", "custom OSC sees preview shown")
+    fake.log.commands = {}
+    fake.client_message("clear")
+    eq(notification("osc-thumb-is-shown"), "false", "custom OSC sees preview cleared")
+    thumb(20)
+    ok(overlay() ~= nil, "same frame renders again after clearing")
+    fake.log.commands = {}
+    fake.client_message("shim-trickplay-clear")
+    eq(notification("osc-thumb-is-shown"), "false", "custom OSC sees item teardown")
+end
+
+-- A display change must redraw the same frame AND notify the custom OSC.
+-- Exercise repeated draw/clear cycles so scaling cannot strand visibility.
+for cycle = 1, 3 do
+    scaled_window("auto")
+    thumb(450, 10, 20)
+    fake.log.commands = {}
+    fake.observe("display-hidpi-scale", cycle + 1)
+    eq(notification("osc-thumb-overlay-id"), "46", "scale change keeps overlay identity")
+    fake.client_message("clear")
+    eq(notification("osc-thumb-is-shown"), "false", "scaled preview clears visibility")
+    fake.log.commands = {}
+    thumb(450, 10, 20)
+    eq(notification("osc-thumb-is-shown"), "true", "scaled preview restores visibility")
+    eq(num(overlay_cmd(), 11), (not OLD_MPV) and (cycle + 1) * W or nil,
+       "custom OSC draw uses the display scale")
+end
+
 print(string.format("1..%d", n))
 if failed > 0 then os.exit(1) end

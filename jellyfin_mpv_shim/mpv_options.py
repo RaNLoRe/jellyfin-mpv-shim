@@ -133,6 +133,11 @@ def hwdec_for(height=None, needs_copy=False):
         # module (tests import it bare). A missing override is "no
         # override", never a crash on the playback path.
         log.debug("could not read the hwdec override", exc_info=True)
+    if settings.mpv_ext and settings.mpv_ext_no_ovr:
+        # mpv owns config discovery here (including portable_config and
+        # conditional profiles). The shim's mpv.conf is not the loaded one.
+        # Do not override that configuration at startup or on each file.
+        return None
     pinned = hwdec_pinned_by_config()
     if pinned is not None:
         # Not "use their value" -- *do not write the option at all*, so

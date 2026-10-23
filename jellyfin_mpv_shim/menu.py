@@ -144,7 +144,13 @@ class OSDMenu(object):
         self.refresh_menu()
 
     def show_menu(self):
-        self.is_menu_shown = True
+        if not self.is_menu_shown:
+            (
+                self.original_osd_color,
+                self.original_osd_size,
+                self.original_osd_border_style,
+            ) = self.playerManager.get_osd_settings()
+            self.is_menu_shown = True
         self.menu_title = _("Main Menu")
         self.menu_selection = 0
         self.mouse_back = False
