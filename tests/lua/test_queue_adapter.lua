@@ -69,3 +69,61 @@ callbacks['input-ipc-server']('', '')
 mp.commandv('playlist-next', 'weak')
 assert(#native == 2 and mp.get_property_number('playlist-count') == 99)
 print('Queue adapter state, duplicate selection, stale actions, removal, move and standalone fallback: PASS')
+
+local tick, loaded, paints = nil, nil, 0
+real.add_periodic_timer = function(interval, fn) assert(interval == 1); tick = fn end
+real.register_event = function(event, fn) assert(event == 'file-loaded'); loaded = fn end
+ipc = 'mpv-jellyfin-osc-test'
+local osc, osc_bridge = dofile('contrib/mpv/jellyfin_queue_adapter.lua').osc(real, utils)
+osc_bridge.listen(function() paints = paints + 1 end)
+assert(requests[#requests].reply_to == 'osc')
+assert(requests[#requests].action == 'capabilities' and requests[#requests].serial == nil)
+assert(not osc_bridge.active())
+assert(osc.get_property_number('playlist-count') == 99)
+local probes = #requests
+tick()
+assert(#requests == probes) -- old shim: no queue polling before negotiation
+callbacks['jms-queue-capabilities']({version=99})
+assert(not osc_bridge.active())
+callbacks['jms-queue-capabilities']({version=1})
+assert(osc_bridge.active() and requests[#requests].action == 'refresh')
+paints = 0
+reply(items, 'a', 'osc1')
+assert(paints == 1 and osc.get_property_number('playlist-count') == 3)
+assert(osc.get_property('loop-playlist') == 'no')
+n = #requests
+osc.command('playlist-prev') -- first item: cannot move back
+assert(#requests == n)
+osc.command('playlist-next')
+assert(requests[#requests].entry == 'b' and requests[#requests].reply_to == 'osc')
+reply(items, 'b', 'osc2')
+osc.command('playlist-prev')
+assert(requests[#requests].entry == 'a')
+reply(items, 'c', 'osc3')
+n = #requests
+osc.command('playlist-next') -- last item
+assert(#requests == n)
+tick()
+reply({items[3], items[1]}, 'c', 'osc4')
+assert(osc.get_property_number('playlist-count') == 2)
+assert(osc.get_property_number('playlist-pos') == 0 and paints == 4)
+loaded()
+reply({}, nil, 'stopped')
+assert(osc.get_property_number('playlist-count') == 0)
+osc.command('script-binding select/select-playlist; script-message-to osc osc-hide')
+assert(native[#native][2] == 'playlistmanager/showplaylist')
+callbacks['input-ipc-server']('', '')
+osc.command('playlist-next')
+assert(native[#native][1] == 'playlist-next')
+print('OSC arrows, queue boundaries, repaint, reorder, stop, picker and standalone fallback: PASS')
+
+-- An old shim routes a capability probe to playlistmanager. Its missing serial
+-- must neither repaint nor advance the manager's independent request sequence.
+ipc = 'mpv-jellyfin-old-shim'
+local manager, manager_bridge = dofile('contrib/mpv/jellyfin_queue_adapter.lua').wrap(real, utils)
+reply(items, 'b', 'manager')
+callbacks['jms-queue-state']({items={}, revision='old-shim', editable=false})
+assert(manager.get_property_number('playlist-pos') == 1)
+manager.commandv('playlist-next')
+assert(requests[#requests].entry == 'c')
+print('Old shim capability reply cannot corrupt playlistmanager: PASS')

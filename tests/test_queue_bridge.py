@@ -38,6 +38,27 @@ class QueueBridgeTest(unittest.TestCase):
         self.send('select', entry='c', revision=self.state['revision'])
         self.pm.skip_to.assert_called_once_with('c')
 
+    def test_osc_replies_are_isolated_from_playlistmanager(self):
+        self.send('refresh', reply_to='osc')
+        self.assertEqual(self.pm._player.commands[-1][:3],
+                         ('script-message-to', 'osc', 'jms-queue-state'))
+        self.send('refresh')
+        self.assertEqual(self.pm._player.commands[-1][1], 'playlistmanager')
+
+    def test_capabilities_do_not_read_or_modify_the_queue(self):
+        with mock.patch.object(self.bridge, 'state', side_effect=AssertionError):
+            self.bridge.handle(self.pm, json.dumps(dict(action='capabilities', reply_to='osc')))
+        command = self.pm._player.commands[-1]
+        self.assertEqual(command[:3], ('script-message-to', 'osc', 'jms-queue-capabilities'))
+        self.assertEqual(json.loads(command[-1]), {'version': 1})
+
+    def test_invalid_reply_target_does_not_select(self):
+        before = len(self.pm._player.commands)
+        self.bridge.handle(self.pm, json.dumps(dict(action='select', entry='c',
+            revision=self.state['revision'], reply_to='../other')))
+        self.pm.skip_to.assert_not_called()
+        self.assertEqual(len(self.pm._player.commands), before)
+
     def test_replacement_and_queue_edits_reject_stale_actions(self):
         self.media.queue = self.media.queue + [{'Id': 'extra', 'PlaylistItemId': 'd'}]
         self.bridge.titles['extra'] = 'Extra'

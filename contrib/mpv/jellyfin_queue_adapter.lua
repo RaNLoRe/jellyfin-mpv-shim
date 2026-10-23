@@ -1,9 +1,10 @@
 -- Jellyfin queue view for playlistmanager. Only this script's mp table is
 -- adapted; mpv's native playlist, other scripts and standalone mpv are untouched.
 local M = {}
-function M.wrap(real, utils)
+function M.wrap(real, utils, reply_to)
     local proxy = setmetatable({}, {__index = real})
     local active = false
+    local detected, last_probe = false, nil
     local state = {items = {}}
     local serial, accepted, pending = 0, 0, nil
     local focus, pending_action = nil, nil
@@ -16,6 +17,17 @@ function M.wrap(real, utils)
         return 0
     end
     local function request(action, index, before, order)
+        if not active and detected and reply_to == 'osc' then
+            if not last_probe or real.get_time() - last_probe >= 5 then
+                last_probe = real.get_time()
+                -- No serial: an old shim sends this to playlistmanager, whose
+                -- adapter rejects nonnumeric serials without changing state.
+                real.commandv('script-message', 'jms-queue', utils.format_json({
+                    action = 'capabilities', reply_to = 'osc',
+                }))
+            end
+            return
+        end
         if not active then return end
         if pending and real.get_time() - pending < 5
             and (action == 'refresh' or pending_action ~= 'refresh') then return end
@@ -35,10 +47,12 @@ function M.wrap(real, utils)
         real.commandv('script-message', 'jms-queue', utils.format_json({
             action = action, entry = item and item.entry,
             revision = state.revision, before = before, serial = serial, order = order,
+            reply_to = reply_to,
         }))
         return true
     end
     local function property(name)
+        if reply_to == 'osc' and name == 'loop-playlist' then return 'no', true end
         if name == 'playlist-count' then return #state.items, true end
         if name == 'playlist-pos' then return current_pos(), true end
         if name == 'playlist' then
@@ -102,6 +116,15 @@ function M.wrap(real, utils)
         return real.commandv(command, ...)
     end
     proxy.command = function(command)
+        if active and reply_to == 'osc' then
+            if command == 'playlist-next' or command == 'playlist-prev' then
+                return proxy.commandv(command)
+            end
+            if command == 'show-text ${playlist} 3000'
+                or command == 'script-binding select/select-playlist; script-message-to osc osc-hide' then
+                return real.commandv('script-binding', 'playlistmanager/showplaylist')
+            end
+        end
         if active and (command == 'write-watch-later-config' or command:match('^playlist%-')) then return end
         return real.command(command)
     end
@@ -157,10 +180,19 @@ function M.wrap(real, utils)
         state = next_state
         on_change(previous, state)
     end)
+    real.register_script_message('jms-queue-capabilities', function(raw)
+        local caps = utils.parse_json(raw)
+        if reply_to ~= 'osc' or not detected or active
+            or type(caps) ~= 'table' or caps.version ~= 1 then return end
+        active = true
+        on_change(nil, state)
+        request('refresh')
+    end)
     local function detect(name)
-        local detected = name and name:find('mpv-jellyfin', 1, true) ~= nil or false
-        if detected == active then return end
-        active, state, pending = detected, {items = {}}, nil
+        local found = name and name:find('mpv-jellyfin', 1, true) ~= nil or false
+        if found == detected then return end
+        detected, last_probe = found, nil
+        active, state, pending = found and reply_to ~= 'osc', {items = {}}, nil
         on_change(nil, state)
         request('refresh')
     end
@@ -168,6 +200,15 @@ function M.wrap(real, utils)
     -- script registers, depending on script startup order.
     real.observe_property('input-ipc-server', 'string', function(_, name) detect(name) end)
     detect(real.get_property('input-ipc-server', ''))
+    return proxy, bridge
+end
+
+-- The OSC owns its own request serials; replies must not go to playlistmanager.
+-- Poll queue edits as well as file changes (reorders need not load a file).
+function M.osc(real, utils)
+    local proxy, bridge = M.wrap(real, utils, 'osc')
+    real.add_periodic_timer(1, bridge.refresh)
+    real.register_event('file-loaded', bridge.refresh)
     return proxy, bridge
 end
 return M

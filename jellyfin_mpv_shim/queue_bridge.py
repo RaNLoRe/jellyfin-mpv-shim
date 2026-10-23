@@ -45,6 +45,13 @@ class QueueBridge:
             return
         if not isinstance(request, dict):
             return
+        reply_to = request.get("reply_to", "playlistmanager")
+        if reply_to not in ("playlistmanager", "osc"):
+            return
+        if request.get("action") == "capabilities":
+            player._player.command("script-message-to", reply_to,
+                                   "jms-queue-capabilities", '{"version":1}')
+            return
         video, entries, current = self.state(player)
         action = request.get("action")
         ids = [q.get("PlaylistItemId") for q in entries]
@@ -101,7 +108,7 @@ class QueueBridge:
                        "title": self.titles.get(q.get("Id")) or "Queue item %d" % (i + 1)}
                       for i, q in enumerate(entries)],
         }
-        player._player.command("script-message-to", "playlistmanager",
+        player._player.command("script-message-to", reply_to,
                                "jms-queue-state", json.dumps(payload))
 
     @staticmethod
