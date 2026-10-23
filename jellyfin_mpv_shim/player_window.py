@@ -87,6 +87,7 @@ class WindowMixin:
         _player: Any
         _video: Any
         _mpv_alive: bool
+        _shutting_down: bool
         _loading: bool
         _runtime_force_window: bool
         mpvtk_active: bool
@@ -688,6 +689,9 @@ class WindowMixin:
         started while this waited for it. None otherwise."""
         from .player import _mpv_errors
 
+        if self._shutting_down:
+            return False
+
         # getattr throughout: a trace that raises is worse than no trace, and
         # partially-built players are real (test doubles, and _init_mpv runs
         # before __init__ has finished setting all of this up).
@@ -1051,6 +1055,8 @@ class WindowMixin:
     def force_window(self, enabled: bool):
         from .player import _mpv_errors, is_using_ext_mpv
 
+        if self._shutting_down:
+            return
         if not self._mpv_alive:
             if not enabled:
                 return

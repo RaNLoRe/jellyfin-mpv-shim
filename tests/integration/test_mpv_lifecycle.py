@@ -73,6 +73,37 @@ def _wait_true(predicate, timeout=1.0):
     return predicate()
 
 
+class ApplicationShutdownTest(unittest.TestCase):
+    def test_shutdown_callbacks_cannot_recreate_player(self):
+        pm = h.build_player(player_module, test=self)
+        states = []
+        pm.on_playstate = states.append
+        pm.stop = lambda: pm.push_playstate(stopped=True)
+        pm._reporter = mock.Mock()
+        pm.terminate()
+        pm._mpv_alive = False
+        with mock.patch.object(pm, "_construct_mpv") as create:
+            pm._on_volume_change("volume", 100)
+            pm.push_playstate(stopped=True)
+            pm.set_browse_window(True)
+            pm.force_window(True)
+            with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                pm._ensure_mpv()
+            create.assert_not_called()
+        self.assertEqual(states, [])
+
+    def test_shutdown_refuses_reuse_of_a_still_live_handle(self):
+        pm = h.build_player(player_module, test=self)
+        pm._shutting_down = True
+        pm._mpv_alive = True
+        with mock.patch.object(pm, "_construct_mpv") as create:
+            for request in (pm._ensure_mpv, pm._reopen_mpv):
+                with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                    request()
+            self.assertIs(pm.set_browse_window(True), False)
+            create.assert_not_called()
+
+
 class TeardownLeakTest(unittest.TestCase):
     """The real leak the refactor fixed: re-opening mpv recreated the trickplay
     worker without stopping the old one — a thread leaked every cycle."""

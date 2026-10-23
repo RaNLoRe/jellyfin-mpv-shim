@@ -676,6 +676,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
     _mpv_build_error = None
     # A re-open failed and the app is shutting down: nothing builds again.
     _mpv_exiting = False
+    # Final user-requested exit, distinct from an upstream reopen failure.
+    _shutting_down = False
     # Called with the error when mpv cannot be re-created; main() wires it
     # to its orderly exit. Class-level for players built with __new__.
     on_reopen_failed = None
@@ -757,6 +759,7 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         self._hud_skip = None
         self._osc_script_loaded = False
         self._mpv_alive = False
+        self._shutting_down = False
         # The thread tearing down a previous mpv instance. A re-open joins it
         # before rebuilding: the old event thread must be dead before we drain
         # its leftover queued tasks (so none re-queue after the drain — see
@@ -1448,6 +1451,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
                 and not self._mpv_alive):
             term.join(timeout=10)
         with self._lock:
+            if self._shutting_down:
+                raise RuntimeError("The application is shutting down")
             if self._mpv_alive:
                 return True
             if self._mpv_build is not None:
@@ -5311,6 +5316,8 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
         so a cast/remote Play transparently re-opens a fresh window; the tray
         and the OSD menu come in through `set_browse_window` and
         `force_window`. Every re-open goes through `_reopen_mpv`."""
+        if self._shutting_down:
+            raise RuntimeError("The application is shutting down")
         if not self._mpv_alive:
             wlog.info("mpv is not running; re-creating it for playback")
             self._reopen_mpv()
@@ -5446,6 +5453,11 @@ class PlayerManager(AudioMixin, ReportingMixin, WindowMixin):
 
 
     def terminate(self):
+        # Serialize against a re-open already in flight, then forbid new ones.
+        # Stop/volume/disconnect notifications can otherwise bring the browser
+        # back while the app is quitting and leave a fresh mpv orphaned.
+        with self._lock:
+            self._shutting_down = True
         # Before stop(): stopping can tear the window down, and the size has
         # to be read while it still exists.
         self._save_window_geometry()

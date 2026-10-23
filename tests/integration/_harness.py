@@ -1296,6 +1296,7 @@ def build_player(player_module, video=None, test=None):
     pm._pending_intro_seek = None
     pm.trickplay = None
     pm._mpv_alive = True
+    pm._shutting_down = False
     pm._terminate_thread = None
     pm._last_offline_record = float("-inf")
     pm._play_epoch = 0

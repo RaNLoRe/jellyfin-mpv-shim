@@ -357,6 +357,7 @@ class ConcurrentReopenTest(unittest.TestCase):
             # round's logo playing.
             self.outgoing.playback_abort = True
             menu = OSDMenu.__new__(OSDMenu)
+            menu.is_menu_shown = False
             menu.playerManager = pm
             menu.profile_menu = None
             menu.svp_menu = None

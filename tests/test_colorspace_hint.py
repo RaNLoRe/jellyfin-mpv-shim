@@ -67,6 +67,7 @@ class ColorspaceHintTest(unittest.TestCase):
         pm = PlayerManager.__new__(PlayerManager)
         pm._player = player
         pm._mpv_alive = True
+        pm._shutting_down = False
         pm._colorspace_hint_suspended = False
         return pm
 
@@ -226,6 +227,7 @@ class BrowseWindowIntegrationTest(unittest.TestCase):
         pm._video = video
         pm._showing_browse_bg = False
         pm._mpv_alive = True
+        pm._shutting_down = False
         pm._loading = loading
         pm._colorspace_hint_suspended = False
         pm._set_force_window = lambda *a, **k: None

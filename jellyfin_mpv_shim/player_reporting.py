@@ -96,6 +96,7 @@ class ReportingMixin:
         # called. It was five until `pause_ignore` came off the list -- which
         # is the argument for keeping it.
         _player: Any
+        _shutting_down: bool
         _video: Any
         _reporter: Any
         _session_ready: Any
@@ -120,6 +121,11 @@ class ReportingMixin:
         can wait on `_lock` for the build (docs/mpv-backends.md section 8). A
         ``stopped`` payload tells the bar to hide."""
         from .player import _mpv_errors
+
+        # Upstream serializes reopens; only final application shutdown must
+        # suppress callbacks that could bring the browser back.
+        if self._shutting_down:
+            return
 
         bar = self.on_playstate
         mpris_on = _mpris_on()
