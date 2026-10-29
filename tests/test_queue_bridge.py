@@ -34,6 +34,17 @@ class QueueBridgeTest(unittest.TestCase):
         self.bridge.handle(self.pm, json.dumps(dict(action=action, serial=1, **args)))
         return json.loads(self.pm._player.commands[-1][-1])
 
+    def test_osc_segments_follow_video_and_policy(self):
+        self.pm._video.intros = [SimpleNamespace(start=10, end=30, type="Intro"),
+                                SimpleNamespace(start=80, end=100, type="Outro")]
+        with mock.patch("jellyfin_mpv_shim.queue_bridge.conf.segment_action",
+                        side_effect=lambda kind: "off" if kind == "Outro" else "ask"):
+            self.assertEqual(self.send('refresh', reply_to='osc')['segments'],
+                             [{"start": 10, "end": 30, "type": "Intro"}])
+            self.assertNotIn('segments', self.send('refresh'))
+            self.pm._video = None
+            self.assertEqual(self.send('refresh', reply_to='osc')['segments'], [])
+
     def test_duplicates_select_the_entry_not_the_item(self):
         self.send('select', entry='c', revision=self.state['revision'])
         self.pm.skip_to.assert_called_once_with('c')

@@ -71,8 +71,9 @@ assert(#native == 2 and mp.get_property_number('playlist-count') == 99)
 print('Queue adapter state, duplicate selection, stale actions, removal, move and standalone fallback: PASS')
 
 local tick, loaded, paints = nil, nil, 0
+local events = {}
 real.add_periodic_timer = function(interval, fn) assert(interval == 1); tick = fn end
-real.register_event = function(event, fn) assert(event == 'file-loaded'); loaded = fn end
+real.register_event = function(event, fn) events[event] = fn; if event == 'file-loaded' then loaded = fn end end
 ipc = 'mpv-jellyfin-osc-test'
 local osc, osc_bridge = dofile('contrib/mpv/jellyfin_queue_adapter.lua').osc(real, utils)
 osc_bridge.listen(function() paints = paints + 1 end)
@@ -116,6 +117,61 @@ callbacks['input-ipc-server']('', '')
 osc.command('playlist-next')
 assert(native[#native][1] == 'playlist-next')
 print('OSC arrows, queue boundaries, repaint, reorder, stop, picker and standalone fallback: PASS')
+
+-- Each media transition clears ranges and rejects both old-file and loading replies.
+callbacks['input-ipc-server']('', 'mpv-jellyfin-segments')
+callbacks['jms-queue-capabilities']({version=1})
+-- Match the OSC listener: unchanged queue revisions do not normally repaint.
+local segment_paints = 0
+osc_bridge.listen(function(previous, current)
+    if not previous or previous.revision ~= current.revision then
+        segment_paints = segment_paints + 1
+    end
+end)
+for cycle = 1, 3 do
+    loaded()
+    callbacks['jms-queue-state']({serial=requests[#requests].serial, items=items,
+        current='a', revision='same-queue', segments={{start=10, ['end']=30}}})
+    assert(#osc.get_property_native('jms-segments') == 1)
+    tick() -- leave a refresh outstanding
+    local old_serial = requests[#requests].serial
+    events['start-file']()
+    assert(#osc.get_property_native('jms-segments') == 0)
+    callbacks['jms-queue-state']({serial=old_serial, items=items,
+        segments={{start=10, ['end']=30}}})
+    assert(#osc.get_property_native('jms-segments') == 0)
+    tick()
+    local loading_serial = requests[#requests].serial
+    callbacks['jms-queue-state']({serial=loading_serial, items=items,
+        segments={{start=10, ['end']=30}}})
+    assert(#osc.get_property_native('jms-segments') == 0)
+    tick() -- another pending request must not suppress file-loaded
+    local before = #requests
+    loaded()
+    assert(#requests == before + 1)
+    callbacks['jms-queue-state']({serial=loading_serial, items=items,
+        segments={{start=10, ['end']=30}}})
+    assert(#osc.get_property_native('jms-segments') == 0)
+    local painted = segment_paints
+    callbacks['jms-queue-state']({serial=requests[#requests].serial, items=items,
+        current='b', revision='same-queue', segments={{start=50, ['end']=70}}})
+    assert(segment_paints == painted + 1) -- late ranges repaint a paused OSC
+    tick()
+    callbacks['jms-queue-state']({serial=requests[#requests].serial, items=items,
+        current='b', revision='same-queue', segments={{start=50, ['end']=70}}})
+    assert(segment_paints == painted + 1) -- identical ranges do not repaint
+    tick()
+    callbacks['jms-queue-state']({serial=requests[#requests].serial, items=items,
+        current='b', revision='same-queue', segments={}})
+    assert(segment_paints == painted + 2) -- disabling ranges also repaints
+    tick()
+    callbacks['jms-queue-state']({serial=requests[#requests].serial, items=items,
+        current='b', revision='same-queue', segments={{start=50, ['end']=70}}})
+    assert(osc.get_property_native('jms-segments')[1].start == 50)
+    events['end-file']()
+    assert(#osc.get_property_native('jms-segments') == 0)
+end
+print('Segment transitions, delayed replies, loading and end-file: PASS')
 
 -- An old shim routes a capability probe to playlistmanager. Its missing serial
 -- must neither repaint nor advance the manager's independent request sequence.

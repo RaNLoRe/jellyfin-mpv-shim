@@ -1,6 +1,16 @@
 -- Jellyfin queue view for playlistmanager. Only this script's mp table is
 -- adapted; mpv's native playlist, other scripts and standalone mpv are untouched.
 local M = {}
+local function same_segments(left, right)
+    left, right = left or {}, right or {}
+    if #left ~= #right then return false end
+    for i, segment in ipairs(right) do
+        if segment.start ~= left[i].start or segment["end"] ~= left[i]["end"]
+            or segment.type ~= left[i].type then return false end
+    end
+    return true
+end
+
 function M.wrap(real, utils, reply_to)
     local proxy = setmetatable({}, {__index = real})
     local active = false
@@ -10,6 +20,7 @@ function M.wrap(real, utils, reply_to)
     local focus, pending_action = nil, nil
     local on_change = function() end
     local random_seeded = false
+    local segments_ready = false
     local function current_pos()
         for i, item in ipairs(state.items) do
             if item.entry == state.current then return i - 1 end
@@ -52,6 +63,7 @@ function M.wrap(real, utils, reply_to)
         return true
     end
     local function property(name)
+        if reply_to == 'osc' and name == 'jms-segments' then return state.segments or {}, true end
         if reply_to == 'osc' and name == 'loop-playlist' then return 'no', true end
         if name == 'playlist-count' then return #state.items, true end
         if name == 'playlist-pos' then return current_pos(), true end
@@ -132,6 +144,16 @@ function M.wrap(real, utils, reply_to)
     function bridge.active() return active end
     function bridge.listen(callback) on_change = callback end
     function bridge.refresh() request('refresh') end
+    function bridge.media_changed(ready)
+        -- Invalidate replies already in flight, including a refresh for the old
+        -- file that would otherwise suppress file-loaded's immediate refresh.
+        serial = serial + 1
+        pending, pending_action = nil, nil
+        segments_ready = ready
+        state.segments = {}
+        on_change(nil, state)
+        if ready then request('refresh') end
+    end
     function bridge.reorder(order)
         return request('reorder', current_pos(), nil, order)
     end
@@ -177,8 +199,13 @@ function M.wrap(real, utils, reply_to)
         accepted, pending = next_state.serial, nil
         local previous = state
         next_state.focus, focus = focus, nil
+        if reply_to == 'osc' and not segments_ready then next_state.segments = {} end
+        local segments_changed = reply_to == 'osc'
+            and not same_segments(previous.segments, next_state.segments)
         state = next_state
-        on_change(previous, state)
+        -- nil requests a redraw even when queue identity/order is unchanged.
+        -- Identical polling replies must not rebuild the OSC every second.
+        if segments_changed then on_change(nil, state) else on_change(previous, state) end
     end)
     real.register_script_message('jms-queue-capabilities', function(raw)
         local caps = utils.parse_json(raw)
@@ -208,7 +235,9 @@ end
 function M.osc(real, utils)
     local proxy, bridge = M.wrap(real, utils, 'osc')
     real.add_periodic_timer(1, bridge.refresh)
-    real.register_event('file-loaded', bridge.refresh)
+    real.register_event('start-file', function() bridge.media_changed(false) end)
+    real.register_event('end-file', function() bridge.media_changed(false) end)
+    real.register_event('file-loaded', function() bridge.media_changed(true) end)
     return proxy, bridge
 end
 return M

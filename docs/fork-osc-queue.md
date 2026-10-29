@@ -26,3 +26,8 @@ Validation: Python queue bridge tests and Lua 5.1 adapter tests cover reply
 routing, duplicate entries, stale actions, SyncPlay, first/last boundaries,
 reordering, repaint notifications, stopped queues, picker routing, and standalone
 fallback. Live server playback remains a manual check after installing the build.
+
+The OSC shades enabled Jellyfin media segments inside the seekbar in amber at 50% opacity. These
+are visual ranges; chapter navigation and seek behavior are unchanged. Ranges
+arrive through OSC queue refresh replies and require the matching shim and
+runtime adapter. Older shims omit the ranges, leaving the normal seekbar.

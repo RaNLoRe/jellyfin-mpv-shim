@@ -8,6 +8,7 @@ import json
 import uuid
 from threading import Thread
 
+from . import conf
 from .items_api import get_items
 
 
@@ -108,6 +109,13 @@ class QueueBridge:
                        "title": self.titles.get(q.get("Id")) or "Queue item %d" % (i + 1)}
                       for i, q in enumerate(entries)],
         }
+        if reply_to == "osc":
+            payload["segments"] = [
+                {"start": segment.start, "end": segment.end, "type": segment.type}
+                for segment in getattr(video, "intros", [])
+                if conf.segment_action(segment.type) != "off"
+                and segment.end > segment.start >= 0
+            ]
         player._player.command("script-message-to", reply_to,
                                "jms-queue-state", json.dumps(payload))
 
